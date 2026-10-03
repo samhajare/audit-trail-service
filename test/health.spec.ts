@@ -10,7 +10,10 @@ describe('Health HTTP endpoint', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       imports: [AppModule],
-    }).overrideProvider(AuditConsumerService).useValue({}).compile();
+    })
+      .overrideProvider(AuditConsumerService)
+      .useValue({})
+      .compile();
     app = module.createNestApplication();
     await app.init();
   });

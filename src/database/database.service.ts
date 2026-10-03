@@ -1,10 +1,10 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { databasePoolConfig } from './database.config';
 
 @Injectable()
-export class DatabaseService implements OnModuleDestroy {
+export class DatabaseService implements OnApplicationShutdown {
   readonly pool: Pool;
   private readonly logger = new Logger(DatabaseService.name);
 
@@ -15,7 +15,7 @@ export class DatabaseService implements OnModuleDestroy {
     });
   }
 
-  async onModuleDestroy() {
+  async onApplicationShutdown() {
     await this.pool.end();
   }
 }

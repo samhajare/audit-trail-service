@@ -4,7 +4,12 @@ import { Kafka, logLevel } from 'kafkajs';
 import { DatabaseModule } from '../database/database.module';
 import { AuditConsumerService } from './audit-consumer.service';
 import { AuditIngestionService } from './audit-ingestion.service';
-import { KAFKA_CLIENT, KAFKA_CONFIG, KafkaConfiguration, kafkaConfig } from './kafka.config';
+import {
+  KAFKA_CLIENT,
+  KAFKA_CONFIG,
+  KafkaConfiguration,
+  kafkaConfig,
+} from './kafka.config';
 
 @Module({
   imports: [ConfigModule, DatabaseModule],
@@ -13,12 +18,15 @@ import { KAFKA_CLIENT, KAFKA_CONFIG, KafkaConfiguration, kafkaConfig } from './k
     {
       provide: KAFKA_CLIENT,
       inject: [KAFKA_CONFIG],
-      useFactory: (config: KafkaConfiguration) => new Kafka({
-        clientId: config.clientId, brokers: config.brokers,
-        logLevel: logLevel.NOTHING,
-        connectionTimeout: 5000, requestTimeout: 10000,
-        retry: { retries: 0 },
-      }),
+      useFactory: (config: KafkaConfiguration) =>
+        new Kafka({
+          clientId: config.clientId,
+          brokers: config.brokers,
+          logLevel: logLevel.NOTHING,
+          connectionTimeout: 5000,
+          requestTimeout: 10000,
+          retry: { retries: 5 },
+        }),
     },
     AuditIngestionService,
     AuditConsumerService,

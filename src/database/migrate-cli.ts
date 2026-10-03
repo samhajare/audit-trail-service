@@ -7,7 +7,12 @@ import { DatabaseModule } from './database.module';
 import { DatabaseService } from './database.service';
 import { runMigrations } from './migrate';
 
-@Module({ imports: [ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }), DatabaseModule] })
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
+    DatabaseModule,
+  ],
+})
 class MigrationModule {}
 
 async function main() {
