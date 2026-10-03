@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "outDir": "dist-simulator" },
+  "include": ["tools/simulator/**/*.ts"],
+  "exclude": ["node_modules", "dist", "dist-simulator", "test", "**/*.spec.ts"]
+}

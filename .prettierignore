@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-simulator
 coverage
 package-lock.json
 BACKEND_AGENTS.md

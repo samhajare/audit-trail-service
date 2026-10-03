@@ -1,6 +1,6 @@
 # Audit Trail Service
 
-Phases B0–B3: NestJS foundation, audit event contract, PostgreSQL persistence, and Kafka ingestion
+Phases B0–B4: NestJS foundation, audit event contract, PostgreSQL persistence, Kafka ingestion, and simulator
 for the Real-Time Audit Trail Explorer.
 
 ## Requirements
@@ -54,13 +54,14 @@ The root application module wires configuration and the health controller under
 The repository interface lives under `src/audit/`; its PostgreSQL implementation,
 connection pool, and explicit migrations live under `src/database/`.
 Kafka ingestion lives under `src/kafka/`.
-The auth, dlq, feature-flags, realtime, simulator, and docs directories
+The standalone simulator lives under `tools/simulator/`.
+The auth, dlq, feature-flags, realtime, and docs directories
 are placeholders for later phases.
 The supplied rules and plan are in `BACKEND_AGENTS.md` and
 `BACKEND_IMPLEMENTATION_PLAN.md`.
 
-No business APIs, Auth0, LaunchDarkly, SSE, retry, DLQ, or simulator logic is
-implemented. Next is B4, the simulator.
+No business APIs, Auth0, LaunchDarkly, SSE, retry, or DLQ logic is implemented.
+Next is B5, REST APIs.
 
 ## Audit event contract (B1)
 
@@ -190,3 +191,54 @@ group, and PostgreSQL schema, deleting only their own resources. The test Kafka
 principal must be able to create/delete topics and consumer groups. Tests cover
 valid/duplicate/invalid delivery, committed offsets, logs, and resuming an
 uncommitted write after an operator restart.
+
+## Simulator (B4)
+
+Build once with `npm run build`, then run the simulator in a second terminal
+while the application consumer is running. It loads `.env`, with shell variables
+taking precedence, and uses the existing `KAFKA_BROKERS`, `KAFKA_CLIENT_ID`, and
+`KAFKA_TOPIC` settings. It never connects to PostgreSQL or starts an application
+consumer. `KAFKA_ENABLED` controls the application consumer, not this producer.
+The target topic must already exist.
+
+In PowerShell, use `npm.cmd` so simulator flags are forwarded unchanged; in
+other shells, use `npm`.
+
+```powershell
+npm.cmd run simulator -- --help
+npm.cmd run simulator -- --type USER_LOGIN
+npm.cmd run simulator -- --type USER_ROLE_CHANGED
+npm.cmd run simulator -- --type DATA_EXPORTED
+npm.cmd run simulator -- --type CONFIG_CHANGED
+npm.cmd run simulator -- --type PAYMENT_REFUNDED
+npm.cmd run simulator -- --count 100
+npm.cmd run simulator -- --count 1000
+npm.cmd run simulator -- --type CONFIG_CHANGED --count 100 --tenant demo-tenant
+npm.cmd run simulator -- --scenario correlated --tenant demo-tenant --correlation demo-flow
+npm.cmd run simulator -- --scenario duplicate --type PAYMENT_REFUNDED
+```
+
+The default `events` scenario publishes one event. `--type all` cycles through
+the five supported event types for bulk runs; `--count` accepts only 1, 100, or 1000. Each event receives a fresh UUID and schema version `1.0` and is validated
+with the backend schema before publishing. Example state changes and actors are
+synthetic and contain no credentials. The default tenant is `demo-tenant`.
+
+`correlated` publishes five ordered events, one of each type, with a shared
+correlation ID and tenant. `duplicate` sends an identical event twice, including
+its eventId, so the B2/B3 pipeline should create one row. For these scenarios,
+`--count` must remain 1; a correlated flow always includes all five types.
+`--correlation` may also group ordinary events. Correlation IDs are Kafka keys
+to preserve ordering within a partition.
+
+Publishing uses sequential batches of up to 100 with acknowledgements from all
+in-sync replicas. JSON logs contain eventId, tenantId, correlationId, eventType,
+service, and topic after acknowledgement, followed by a completion count. Kafka
+acknowledgement does not guarantee that the consumer has already persisted the
+event. Failure exits nonzero and may leave earlier batches published; rerunning
+generates fresh IDs. Retry/DLQ demo scenarios are deferred until B8.
+
+`npm run build` builds the service in `dist/` and simulator in `dist-simulator/`.
+`npm run typecheck` checks both. Unit tests cover generation, CLI arguments, and
+producer failures. The real integration test publishes all five types, 100/1000
+events, correlated flow, and duplicates through Kafka, then checks persistence
+only via the backend repository in its isolated test schema.

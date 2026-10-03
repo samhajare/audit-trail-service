@@ -16,6 +16,9 @@ import {
   KafkaConfiguration,
 } from '../src/kafka/kafka.config';
 import { auditEventFixture } from './fixtures/audit-event.fixture';
+import { generateEvents } from '../tools/simulator/events';
+import { simulatorOptionsSchema } from '../tools/simulator/options';
+import { publishEvents } from '../tools/simulator/publisher';
 
 async function waitFor(predicate: () => Promise<boolean>, description: string) {
   const deadline = Date.now() + 30000;
@@ -243,5 +246,59 @@ describe('Kafka -> validation -> PostgreSQL', () => {
     expect((await repository.getStatistics(failedEvent.tenantId)).total).toBe(
       3,
     );
+  }, 60000);
+  it('persists simulator batches, all event types, correlated flow, and duplicate delivery through Kafka', async () => {
+    const tenant = `b4-${suffix}`;
+    const singleEvents = [
+      'USER_LOGIN',
+      'USER_ROLE_CHANGED',
+      'DATA_EXPORTED',
+      'CONFIG_CHANGED',
+      'PAYMENT_REFUNDED',
+    ].flatMap((type) =>
+      generateEvents(simulatorOptionsSchema.parse({ tenant, type })),
+    );
+    const hundred = generateEvents(
+      simulatorOptionsSchema.parse({ tenant, count: 100 }),
+    );
+    const thousand = generateEvents(
+      simulatorOptionsSchema.parse({ tenant, count: 1000 }),
+    );
+    const flow = generateEvents(
+      simulatorOptionsSchema.parse({ tenant, scenario: 'correlated' }),
+    );
+    const duplicate = generateEvents(
+      simulatorOptionsSchema.parse({ tenant, scenario: 'duplicate' }),
+    );
+    const simulatorProducer = kafka.producer({ allowAutoTopicCreation: false });
+    const all = [
+      ...singleEvents,
+      ...hundred,
+      ...thousand,
+      ...flow,
+      ...duplicate,
+    ];
+    expect(await publishEvents(simulatorProducer, topic, all)).toBe(1112);
+    await waitFor(
+      async () => (await repository.getStatistics(tenant)).total === 1111,
+      'all simulator messages persisted with duplicate ignored',
+    );
+    const timeline = await repository.findByCorrelationId(
+      tenant,
+      flow[0]!.correlationId,
+    );
+    expect(timeline.map((event) => event.eventId)).toEqual(
+      flow.map((event) => event.eventId),
+    );
+    expect(
+      await repository.findByEventId(tenant, duplicate[0]!.eventId),
+    ).not.toBeNull();
+    expect((await repository.getStatistics(tenant)).byEventType).toEqual({
+      USER_LOGIN: 223,
+      USER_ROLE_CHANGED: 222,
+      DATA_EXPORTED: 222,
+      CONFIG_CHANGED: 222,
+      PAYMENT_REFUNDED: 222,
+    });
   }, 60000);
 });
