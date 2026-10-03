@@ -1,0 +1,6 @@
+node_modules
+dist
+coverage
+package-lock.json
+BACKEND_AGENTS.md
+BACKEND_IMPLEMENTATION_PLAN.md
