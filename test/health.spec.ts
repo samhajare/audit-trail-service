@@ -1,3 +1,4 @@
+import { LAUNCHDARKLY_CLIENT } from '../src/feature-flags/feature-flag.service';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -11,6 +12,8 @@ describe('Health HTTP endpoint', () => {
     const module = await Test.createTestingModule({
       imports: [AppModule],
     })
+      .overrideProvider(LAUNCHDARKLY_CLIENT)
+      .useValue(null)
       .overrideProvider(AuditConsumerService)
       .useValue({})
       .compile();

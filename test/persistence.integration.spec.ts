@@ -1,3 +1,4 @@
+import { LAUNCHDARKLY_CLIENT } from '../src/feature-flags/feature-flag.service';
 import { randomUUID } from 'node:crypto';
 import { INestApplicationContext } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -43,6 +44,8 @@ describe('PostgreSQL audit persistence', () => {
     // Only this newly created schema is touched by migration/tests/cleanup.
     await runMigrations(pool);
     const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(LAUNCHDARKLY_CLIENT)
+      .useValue(null)
       .overrideProvider(DatabaseService)
       .useValue({ pool })
       .compile();
@@ -68,8 +71,13 @@ describe('PostgreSQL audit persistence', () => {
 
   it('applies migration once, including concurrent runs', async () => {
     await Promise.all([runMigrations(pool), runMigrations(pool)]);
-    const result = await pool.query('SELECT id FROM schema_migrations');
-    expect(result.rows).toEqual([{ id: '001-create-audit-events' }]);
+    const result = await pool.query(
+      'SELECT id FROM schema_migrations ORDER BY id',
+    );
+    expect(result.rows).toEqual([
+      { id: '001-create-audit-events' },
+      { id: '002-create-audit-dlq' },
+    ]);
   });
 
   it('creates required JSONB columns, timestamps, and indexes', async () => {

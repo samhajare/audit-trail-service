@@ -41,6 +41,7 @@ async function main() {
         }),
       );
     },
+    options.scenario,
   );
   console.log(
     JSON.stringify({

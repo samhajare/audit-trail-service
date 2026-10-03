@@ -26,6 +26,10 @@ export class ProhibitedCredentialFieldsError extends Error {
   }
 }
 
+export function isCredentialField(key: string): boolean {
+  return prohibitedKeys.has(key.toLowerCase().replace(/[^a-z]/g, ''));
+}
+
 /** Storage boundary protection, not response masking or privileged disclosure. */
 export function assertNoCredentials(value: unknown): void {
   if (value === null || typeof value !== 'object') return;
@@ -34,7 +38,7 @@ export function assertNoCredentials(value: unknown): void {
     return;
   }
   for (const [key, nested] of Object.entries(value)) {
-    if (prohibitedKeys.has(key.toLowerCase().replace(/[^a-z]/g, ''))) {
+    if (isCredentialField(key)) {
       throw new ProhibitedCredentialFieldsError();
     }
     assertNoCredentials(nested);

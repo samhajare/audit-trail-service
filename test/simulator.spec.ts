@@ -86,8 +86,8 @@ describe('Kafka simulator scenarios', () => {
     ['--type', 'UNKNOWN'],
     ['--tenant', ' '],
     ['--correlation', ''],
-    ['--scenario', 'retry'],
-    ['--scenario', 'dlq'],
+    ['--scenario', 'retry', '--count', '100'],
+    ['--scenario', 'dlq', '--count', '100'],
     ['--scenario', 'correlated', '--count', '100'],
     ['--scenario', 'correlated', '--type', 'USER_LOGIN'],
     ['--scenario', 'duplicate', '--count', '1000'],
@@ -107,6 +107,29 @@ describe('Simulator Kafka publishing', () => {
   beforeEach(() => {
     for (const method of Object.values(producer))
       method.mockReset().mockResolvedValue(undefined);
+  });
+  it('publishes a valid retry demo without injecting backend failures', async () => {
+    await publishEvents(
+      producer,
+      'audit.events',
+      scenario(['--scenario', 'retry']),
+      undefined,
+      'retry',
+    );
+    const event = JSON.parse(producer.send.mock.calls[0]![0].messages[0].value);
+    expect(auditEventSchema.safeParse(event).success).toBe(true);
+  });
+  it('publishes the DLQ demo with an unsupported version through Kafka', async () => {
+    await publishEvents(
+      producer,
+      'audit.events',
+      scenario(['--scenario', 'dlq']),
+      undefined,
+      'dlq',
+    );
+    const event = JSON.parse(producer.send.mock.calls[0]![0].messages[0].value);
+    expect(event.schemaVersion).toBe('2.0');
+    expect(auditEventSchema.safeParse(event).success).toBe(false);
   });
   it('publishes 1000 events in acknowledged Kafka batches keyed by correlationId', async () => {
     const events = scenario(['--count', '1000']);

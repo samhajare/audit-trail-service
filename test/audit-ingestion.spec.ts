@@ -3,12 +3,15 @@ import { AuditRepository } from '../src/audit/audit.repository';
 import { EVENT_TYPES } from '../src/contracts/event-types';
 import { ProhibitedCredentialFieldsError } from '../src/database/assert-no-credentials';
 import { AuditIngestionService } from '../src/kafka/audit-ingestion.service';
+import { AuditEventBus } from '../src/realtime/audit-event-bus';
 import { auditEventFixture } from './fixtures/audit-event.fixture';
 
 describe('Audit Kafka message processing', () => {
   const location = { topic: 'audit.events', partition: 0, offset: '7' };
   const create = jest.fn();
   const repository: AuditRepository = {
+    findById: jest.fn(),
+    findPage: jest.fn(),
     create,
     findByEventId: jest.fn(),
     findMany: jest.fn(),
@@ -16,13 +19,19 @@ describe('Audit Kafka message processing', () => {
     getStatistics: jest.fn(),
   };
   let service: AuditIngestionService;
+  const publish = jest.fn();
 
   beforeEach(() => {
-    create.mockReset().mockResolvedValue({ status: 'created' });
+    create
+      .mockReset()
+      .mockImplementation(async (event) => ({ status: 'created', event }));
+    publish.mockReset();
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
-    service = new AuditIngestionService(repository);
+    service = new AuditIngestionService(repository, {
+      publish,
+    } as unknown as AuditEventBus);
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -34,6 +43,7 @@ describe('Audit Kafka message processing', () => {
         await service.handle(Buffer.from(JSON.stringify(event)), location),
       ).toBe('persisted');
       expect(create).toHaveBeenCalledWith(event);
+      expect(publish).toHaveBeenCalledWith(event);
       expect(Logger.prototype.log).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'persisted',
@@ -55,6 +65,24 @@ describe('Audit Kafka message processing', () => {
         location,
       ),
     ).toBe('duplicate');
+    expect(publish).not.toHaveBeenCalled();
+  });
+  it('waits for persistence before publishing a creation', async () => {
+    const event = auditEventFixture();
+    let commit!: (value: unknown) => void;
+    create.mockReturnValue(
+      new Promise((resolve) => {
+        commit = resolve;
+      }),
+    );
+    const processing = service.handle(
+      Buffer.from(JSON.stringify(event)),
+      location,
+    );
+    expect(publish).not.toHaveBeenCalled();
+    commit({ status: 'created', event });
+    await expect(processing).resolves.toBe('persisted');
+    expect(publish).toHaveBeenCalledTimes(1);
   });
   it.each([null, Buffer.from('{invalid'), Buffer.from([0xff])])(
     'rejects tombstones, malformed JSON, or invalid UTF-8 without persistence',
@@ -110,6 +138,7 @@ describe('Audit Kafka message processing', () => {
         location,
       ),
     ).rejects.toThrow('Audit persistence failed');
+    expect(publish).not.toHaveBeenCalled();
     expect(
       JSON.stringify(jest.mocked(Logger.prototype.error).mock.calls),
     ).not.toContain('must-never-be-logged');

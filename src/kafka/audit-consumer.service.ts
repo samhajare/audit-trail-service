@@ -6,7 +6,8 @@ import {
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { Consumer, EachMessagePayload, Kafka } from 'kafkajs';
-import { AuditIngestionService } from './audit-ingestion.service';
+import { AuditRetryService } from './audit-retry.service';
+import { RETRY_CONFIG, RetryConfiguration } from './retry.config';
 import { KAFKA_CLIENT, KAFKA_CONFIG, KafkaConfiguration } from './kafka.config';
 
 @Injectable()
@@ -20,7 +21,8 @@ export class AuditConsumerService
   constructor(
     @Inject(KAFKA_CLIENT) kafka: Kafka,
     @Inject(KAFKA_CONFIG) private readonly config: KafkaConfiguration,
-    private readonly ingestion: AuditIngestionService,
+    private readonly ingestion: AuditRetryService,
+    @Inject(RETRY_CONFIG) private readonly retry: RetryConfiguration,
   ) {
     this.consumer = kafka.consumer({
       groupId: config.groupId,
@@ -40,8 +42,9 @@ export class AuditConsumerService
     try {
       await this.consumer.connect();
       this.connected = true;
+      await this.ingestion.start();
       await this.consumer.subscribe({
-        topic: this.config.topic,
+        topics: [this.config.topic, this.retry.retryTopic, this.retry.dlqTopic],
         fromBeginning: true,
       });
       await this.consumer.run({
@@ -55,7 +58,12 @@ export class AuditConsumerService
         groupId: this.config.groupId,
       });
     } catch {
-      if (this.connected) await this.consumer.disconnect();
+      if (this.connected) {
+        await Promise.allSettled([
+          this.consumer.disconnect(),
+          this.ingestion.close(),
+        ]);
+      }
       this.connected = false;
       throw new Error('Kafka audit consumer startup failed');
     }
@@ -65,12 +73,17 @@ export class AuditConsumerService
     topic,
     partition,
     message,
+    heartbeat,
   }: EachMessagePayload): Promise<void> {
-    await this.ingestion.handle(message.value, {
-      topic,
-      partition,
-      offset: message.offset,
-    });
+    await this.ingestion.handle(
+      message.value,
+      {
+        topic,
+        partition,
+        offset: message.offset,
+      },
+      heartbeat,
+    );
     await this.consumer.commitOffsets([
       { topic, partition, offset: (BigInt(message.offset) + 1n).toString() },
     ]);
@@ -79,8 +92,14 @@ export class AuditConsumerService
   async beforeApplicationShutdown() {
     if (!this.connected) return;
     // Drain ingestion before the database pool's onApplicationShutdown closes it.
-    await this.consumer.stop();
-    await this.consumer.disconnect();
-    this.connected = false;
+    try {
+      await this.consumer.stop();
+    } finally {
+      await Promise.allSettled([
+        this.consumer.disconnect(),
+        this.ingestion.close(),
+      ]);
+      this.connected = false;
+    }
   }
 }

@@ -1,9 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { TextDecoder } from 'node:util';
-import { KafkaJSNonRetriableError } from 'kafkajs';
+import {
+  AuditPersistenceError,
+  isTransientPersistenceError,
+} from './audit-persistence-error';
 import { AuditRepository } from '../audit/audit.repository';
 import { auditEventSchema } from '../contracts/audit-event.schema';
 import { ProhibitedCredentialFieldsError } from '../database/assert-no-credentials';
+import { AuditEventBus } from '../realtime/audit-event-bus';
 
 export interface KafkaMessageLocation {
   topic: string;
@@ -11,7 +15,7 @@ export interface KafkaMessageLocation {
   offset: string;
 }
 
-function logIdentifiers(payload: unknown): Record<string, string> {
+export function logIdentifiers(payload: unknown): Record<string, string> {
   const fields: Record<string, string> = {};
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload))
     return fields;
@@ -40,7 +44,10 @@ function logIdentifiers(payload: unknown): Record<string, string> {
 export class AuditIngestionService {
   private readonly logger = new Logger(AuditIngestionService.name);
 
-  constructor(private readonly repository: AuditRepository) {}
+  constructor(
+    private readonly repository: AuditRepository,
+    private readonly events: AuditEventBus,
+  ) {}
 
   async handle(
     value: Buffer | null,
@@ -73,6 +80,7 @@ export class AuditIngestionService {
     }
     try {
       const result = await this.repository.create(parsed.data);
+      if (result.status === 'created') this.events.publish(result.event);
       const status = result.status === 'created' ? 'persisted' : 'duplicate';
       this.logger.log({
         message: 'Audit message processed',
@@ -97,7 +105,7 @@ export class AuditIngestionService {
         ...identifiers,
       });
       // Never pass driver errors (which may contain data) into KafkaJS logging.
-      throw new KafkaJSNonRetriableError('Audit persistence failed');
+      throw new AuditPersistenceError(isTransientPersistenceError(error));
     }
   }
 }

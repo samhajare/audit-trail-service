@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { createAuditEventsMigration } from './migrations/001-create-audit-events';
+import { createAuditDlqMigration } from './migrations/002-create-audit-dlq';
 
 /** Explicit, transactional migrations; application startup never changes tables. */
 export async function runMigrations(pool: Pool): Promise<void> {
@@ -13,15 +14,20 @@ export async function runMigrations(pool: Pool): Promise<void> {
         applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    const applied = await client.query(
-      'SELECT id FROM schema_migrations WHERE id = $1',
-      [createAuditEventsMigration.id],
-    );
-    if (applied.rowCount === 0) {
-      await client.query(createAuditEventsMigration.sql);
-      await client.query('INSERT INTO schema_migrations (id) VALUES ($1)', [
-        createAuditEventsMigration.id,
-      ]);
+    for (const migration of [
+      createAuditEventsMigration,
+      createAuditDlqMigration,
+    ]) {
+      const applied = await client.query(
+        'SELECT id FROM schema_migrations WHERE id = $1',
+        [migration.id],
+      );
+      if (applied.rowCount === 0) {
+        await client.query(migration.sql);
+        await client.query('INSERT INTO schema_migrations (id) VALUES ($1)', [
+          migration.id,
+        ]);
+      }
     }
     await client.query('COMMIT');
   } catch (error) {

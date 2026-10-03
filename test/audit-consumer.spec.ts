@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Consumer, EachMessagePayload, Kafka } from 'kafkajs';
 import { AuditConsumerService } from '../src/kafka/audit-consumer.service';
-import { AuditIngestionService } from '../src/kafka/audit-ingestion.service';
+import { AuditRetryService } from '../src/kafka/audit-retry.service';
 import { KafkaConfiguration } from '../src/kafka/kafka.config';
 
 describe('Kafka consumer offsets and lifecycle', () => {
@@ -11,6 +11,13 @@ describe('Kafka consumer offsets and lifecycle', () => {
     clientId: 'test',
     groupId: 'test',
     topic: 'audit.events',
+  };
+  const retry = {
+    sourceTopic: config.topic,
+    retryTopic: config.topic + '.retry',
+    dlqTopic: config.topic + '.dlq',
+    maxRetries: 3,
+    delayMs: 0,
   };
   const payload: EachMessagePayload = {
     topic: 'audit.events',
@@ -36,7 +43,7 @@ describe('Kafka consumer offsets and lifecycle', () => {
     on: jest.Mock;
     events: { CRASH: string };
   };
-  let ingestion: AuditIngestionService;
+  let ingestion: AuditRetryService;
   let kafka: Kafka;
 
   beforeEach(() => {
@@ -54,17 +61,19 @@ describe('Kafka consumer offsets and lifecycle', () => {
       consumer: jest.fn().mockReturnValue(consumer as unknown as Consumer),
     } as unknown as Kafka;
     ingestion = {
-      handle: jest.fn().mockResolvedValue('persisted'),
-    } as unknown as AuditIngestionService;
+      start: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+      handle: jest.fn().mockResolvedValue(undefined),
+    } as unknown as AuditRetryService;
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
   });
   afterEach(() => jest.restoreAllMocks());
 
   it('subscribes from the earliest uncommitted offset with auto commit disabled', async () => {
-    const service = new AuditConsumerService(kafka, config, ingestion);
+    const service = new AuditConsumerService(kafka, config, ingestion, retry);
     await service.onApplicationBootstrap();
     expect(consumer.subscribe).toHaveBeenCalledWith({
-      topic: 'audit.events',
+      topics: ['audit.events', 'audit.events.retry', 'audit.events.dlq'],
       fromBeginning: true,
     });
     expect(consumer.run).toHaveBeenCalledWith(
@@ -85,9 +94,9 @@ describe('Kafka consumer offsets and lifecycle', () => {
     async (outcome) => {
       jest.spyOn(ingestion, 'handle').mockImplementation(async () => {
         expect(consumer.commitOffsets).not.toHaveBeenCalled();
-        return outcome as 'persisted' | 'duplicate' | 'rejected';
+        void outcome;
       });
-      const service = new AuditConsumerService(kafka, config, ingestion);
+      const service = new AuditConsumerService(kafka, config, ingestion, retry);
       await service.processMessage(payload);
       expect(consumer.commitOffsets).toHaveBeenCalledWith([
         { topic: payload.topic, partition: 0, offset: '9007199254740994' },
@@ -98,7 +107,7 @@ describe('Kafka consumer offsets and lifecycle', () => {
     jest
       .spyOn(ingestion, 'handle')
       .mockRejectedValue(new Error('DB unavailable'));
-    const service = new AuditConsumerService(kafka, config, ingestion);
+    const service = new AuditConsumerService(kafka, config, ingestion, retry);
     await expect(service.processMessage(payload)).rejects.toThrow(
       'DB unavailable',
     );
@@ -109,6 +118,7 @@ describe('Kafka consumer offsets and lifecycle', () => {
       kafka,
       { ...config, enabled: false },
       ingestion,
+      retry,
     );
     await service.onApplicationBootstrap();
     await service.beforeApplicationShutdown();
@@ -117,7 +127,7 @@ describe('Kafka consumer offsets and lifecycle', () => {
   });
   it('disconnects after a subscription failure and fails startup safely', async () => {
     consumer.subscribe.mockRejectedValue(new Error('broker details'));
-    const service = new AuditConsumerService(kafka, config, ingestion);
+    const service = new AuditConsumerService(kafka, config, ingestion, retry);
     await expect(service.onApplicationBootstrap()).rejects.toThrow(
       'Kafka audit consumer startup failed',
     );

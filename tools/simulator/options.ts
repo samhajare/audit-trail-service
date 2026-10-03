@@ -4,7 +4,9 @@ import { EVENT_TYPES } from '../../src/contracts/event-types';
 
 export const simulatorOptionsSchema = z
   .strictObject({
-    scenario: z.enum(['events', 'correlated', 'duplicate']).default('events'),
+    scenario: z
+      .enum(['events', 'correlated', 'duplicate', 'retry', 'dlq'])
+      .default('events'),
     type: z.enum(['all', ...EVENT_TYPES]).default('all'),
     count: z.union([z.literal(1), z.literal(100), z.literal(1000)]).default(1),
     tenant: z.string().trim().min(1).default('demo-tenant'),
@@ -29,12 +31,14 @@ export type SimulatorOptions = z.infer<typeof simulatorOptionsSchema>;
 
 export const SIMULATOR_HELP = `Audit event simulator (Kafka only)
 Usage: npm run simulator -- [options]
-  --scenario events|correlated|duplicate  Default: events
+  --scenario events|correlated|duplicate|retry|dlq  Default: events
   --type all|${EVENT_TYPES.join('|')}  Default: all
   --count 1|100|1000                     Events scenario only; default: 1
   --tenant <tenantId>                    Default: demo-tenant
   --correlation <correlationId>          Optional shared correlation ID
   --help                                Show usage without connecting
+  retry: publish a valid event during a controlled database outage
+  dlq: publish a synthetic event with unsupported schemaVersion 2.0
 `;
 
 export function parseSimulatorArgs(args: string[]): SimulatorOptions | null {
